@@ -1,0 +1,26 @@
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+.npmrc
+
+# Dependencies, generated bundles, caches and local records
+node_modules/
+dist/
+.npm-cache/
+.cache/
+logs/
+*.log
+uploads/
+backups/
+*.bak*
+*.bkp
+*.sql.bak
+*.tsbuildinfo
+coverage/
+.DS_Store
+Thumbs.db
