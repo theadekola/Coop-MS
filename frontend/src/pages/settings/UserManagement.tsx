@@ -219,7 +219,7 @@ export default function UserManagement() {
         await staffApi.create({
           fullName,
           email,
-          phone: cells[indexOf('phone')] || '08000000000',
+          phone: cells[indexOf('phone')] || '',
           role: ((cells[indexOf('role')] || 'staff').toLowerCase().replace(/\s+/g, '_') as UserRole),
           department: cells[indexOf('department')] || 'General',
           password: cells[indexOf('password')] || 'Password@123',

@@ -117,7 +117,7 @@ RATE_LIMIT_WINDOW_MS=900000
 RATE_LIMIT_MAX=100
 ```
 
-If SQL Server requires encrypted connections, set `DB_ENCRYPT=true`.
+Fill the blank credentials and secrets privately in `backend/.env`; do not deploy with empty values. Generate independent random JWT and OTP secrets. `JWT_SECRET` must have at least 32 characters. Use the SQL Server certificate with `DB_ENCRYPT=true` and `DB_TRUST_CERT=false`.
 
 Install and build:
 

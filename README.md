@@ -110,7 +110,9 @@ RATE_LIMIT_WINDOW_MS=900000
 RATE_LIMIT_MAX=100
 ```
 
-Set DB_ENCRYPT=true if your SQL Server requires encrypted connections.
+Configure the blank passwords and secrets privately in `backend/.env`; do not leave them empty. Generate independent random JWT and OTP secrets. `JWT_SECRET` requires at least 32 characters and the API refuses to start without a valid configured key. Use your SQL Server certificate to keep `DB_ENCRYPT=true` and `DB_TRUST_CERT=false`.
+
+For support links, copy `frontend/.env.example` to `frontend/.env` and set `VITE_SUPPORT_EMAIL` to your own support address before building. Support links stay inactive until configured. `VITE_*` values are public in the frontend bundle; never place credentials there.
 
 ## Database
 

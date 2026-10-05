@@ -158,7 +158,7 @@ export default function Login() {
       '',
       supportForm.message || (mode === 'password' ? 'Please help me reset my password.' : 'Please help me with the system.'),
     ].join('\n')
-    openSupportEmail(subject, body)
+    if (!openSupportEmail(subject, body)) return
     toast.success('Opening your email app')
     setSupportModal(null)
   }

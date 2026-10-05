@@ -12,6 +12,7 @@
 node_modules/
 dist/
 .npm-cache/
+npm-cache/
 .cache/
 logs/
 *.log
