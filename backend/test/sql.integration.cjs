@@ -69,6 +69,53 @@ test('SQL transactions, independent expense approval, reversals, chat ACLs and l
   const issued=await session.newSession(staff);assert.equal((await session.authenticateToken(issued.token)).role,'admin')
   await pool.request().query('UPDATE Staff SET TokenVersion=TokenVersion+1 WHERE StaffID=1')
   await assert.rejects(session.authenticateToken(issued.token),/revoked/)
+  // Exercise the real HTTP handlers against the restricted SQL connection.
+  process.env.DATA_ENCRYPTION_KEY=randomBytes(32).toString('hex')
+  const {encrypt}=require('../dist/security/encryption'),{authenticator}=require('otplib'),bcrypt=require('bcryptjs')
+  const loginPassword=randomBytes(20).toString('hex'),secret=authenticator.generateSecret()
+  await pool.request().input('Hash',sql.NVarChar,await bcrypt.hash(loginPassword,12)).input('Secret',sql.NVarChar,encrypt(secret))
+   .query('UPDATE Staff SET PasswordHash=@Hash,TwoFactorSecret=@Secret,TwoFactorEnabled=1 WHERE StaffID=1')
+  const {createApp}=require('../dist/app'),{httpServer,io}=createApp()
+  const fsPromises=require('node:fs/promises'),os=require('node:os')
+  const storage=await fsPromises.mkdtemp(path.join(os.tmpdir(),'coop-security-'))
+  process.env.PRIVATE_UPLOAD_DIR=storage
+  await new Promise(resolve=>httpServer.listen(0,'127.0.0.1',resolve))
+  const base=`http://127.0.0.1:${httpServer.address().port}`;process.env.FRONTEND_URL=base
+  const request=(url,data,token,extra={})=>fetch(base+'/api'+url,{method:data===undefined?'GET':'POST',headers:{...(data===undefined?{}:{'Content-Type':'application/json'}),...(token?{Authorization:`Bearer ${token}`} : {}),...extra},...(data===undefined?{}:{body:JSON.stringify(data)})})
+  try{
+   const login=async()=>{const response=await request('/auth/login',{email:'submitter@example.test',password:loginPassword});assert.equal(response.status,200);const data=await response.json();assert.equal(data.requires2FA,true);assert.equal(data.token,undefined);return data.challengeId}
+   const expired=await login()
+   await pool.request().input('ID',sql.UniqueIdentifier,expired).query('UPDATE AuthChallenges SET ExpiresAt=DATEADD(minute,-1,SYSUTCDATETIME()) WHERE ChallengeID=@ID')
+   assert.equal((await request('/auth/verify-2fa',{challengeId:expired,otp:authenticator.generate(secret)})).status,401)
+   assert.equal((await request('/auth/verify-2fa',{staffId:1,otp:authenticator.generate(secret)})).status,400)
+   const challenge=await login(),code=authenticator.generate(secret)
+   const verified=await request('/auth/verify-2fa',{challengeId:challenge,otp:code});assert.equal(verified.status,200)
+   const signedIn=await verified.json(),cookie=verified.headers.get('set-cookie').split(';')[0]
+   assert.match(verified.headers.get('set-cookie'),/HttpOnly/i);assert.match(verified.headers.get('set-cookie'),/SameSite=Strict/i)
+   assert.equal((await request('/auth/verify-2fa',{challengeId:challenge,otp:code})).status,401)
+   const secondChallenge=await login()
+   assert.equal((await request('/auth/verify-2fa',{challengeId:secondChallenge,otp:code})).status,401)
+   const outsider=(await pool.request().query('SELECT StaffID,Role,Email,TokenVersion FROM Staff WHERE StaffID=3')).recordset[0]
+   const outsiderSession=await session.newSession(outsider)
+   assert.equal((await request('/staff',undefined,outsiderSession.token)).status,403)
+   assert.equal((await request('/settings/my-profile-1',undefined,outsiderSession.token)).status,403)
+   const form=new FormData();form.append('roomId','1');form.append('file',new Blob(['%PDF-1.7\nprotected'],{type:'application/pdf'}),'private.pdf')
+   const uploaded=await fetch(base+'/api/documents',{method:'POST',headers:{Authorization:`Bearer ${signedIn.token}`},body:form});assert.equal(uploaded.status,201)
+   const document=(await uploaded.json()).data
+   assert.equal((await request(`/documents/${document.DocumentID}`,undefined,outsiderSession.token)).status,404)
+   const downloaded=await request(`/documents/${document.DocumentID}`,undefined,signedIn.token)
+   assert.equal(downloaded.status,200);assert.match(downloaded.headers.get('cache-control'),/no-store/);assert.equal(await downloaded.text(),'%PDF-1.7\nprotected')
+   const refreshed=await request('/auth/refresh',{},undefined,{Origin:base,Cookie:cookie});assert.equal(refreshed.status,200)
+   const rotated=refreshed.headers.get('set-cookie').split(';')[0]
+   assert.equal((await request('/auth/refresh',{},undefined,{Origin:base,Cookie:cookie})).status,401)
+   assert.equal((await request('/auth/logout',{},signedIn.token)).status,200)
+   assert.equal((await request('/auth/me',undefined,signedIn.token)).status,401)
+   assert.equal((await request('/auth/refresh',{},undefined,{Origin:base,Cookie:rotated})).status,401)
+  }finally{
+   await new Promise(resolve=>io.close(resolve))
+   assert.ok(storage.startsWith(path.resolve(os.tmpdir())+path.sep))
+   await fsPromises.rm(storage,{recursive:true,force:true})
+  }
   await appPool.close();appPool=undefined
   await pool.request().batch(`DROP USER [${login}]`);await master.request().batch(`DROP LOGIN [${login}]`)
  }finally{

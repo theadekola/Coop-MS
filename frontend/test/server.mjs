@@ -4,9 +4,10 @@ import path from 'node:path'
 const root=path.resolve('dist')
 const html=await readFile(path.join(root,'index.html'),'utf8')
 const policy=html.match(/http-equiv="Content-Security-Policy" content="([^"]+)"/)[1]+"; frame-ancestors 'none'"
-createServer(async(req,res)=>{
+const server=createServer(async(req,res)=>{
  try{
   const pathname=new URL(req.url,'http://localhost').pathname
+  if(pathname==='/__test_shutdown' && req.method==='POST'){res.end('stopped');server.close(()=>process.exit(0));return}
   let file=path.resolve(root,'.'+decodeURIComponent(pathname))
   if(!file.startsWith(root+path.sep))file=path.join(root,'index.html')
   if(!path.extname(file))file=path.join(root,'index.html')

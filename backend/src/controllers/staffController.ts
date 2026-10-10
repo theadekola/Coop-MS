@@ -121,6 +121,10 @@ export async function updateStaff(req: AuthRequest, res: Response): Promise<void
       res.status(403).json({ success: false, message: 'Only Super Admin can assign the Super Admin role' })
       return
     }
+    if(target.Role==='super_admin' && ((role && role!=='super_admin') || (status && status!=='active'))){
+      const others=await pool.request().input('ID',sql.Int,target.StaffID).query("SELECT COUNT(*) AS Total FROM Staff WHERE StaffID<>@ID AND Role='super_admin' AND Status='active'")
+      if(!others.recordset[0].Total){res.status(409).json({success:false,message:'Keep at least one active super administrator'});return}
+    }
     const resolvedDeptId = await resolveDeptId(pool, deptId, department)
     const passwordResetKeyHash = null
     await pool.request()

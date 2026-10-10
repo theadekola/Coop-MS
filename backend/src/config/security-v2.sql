@@ -59,7 +59,7 @@ BEGIN
  BEGIN TRY BEGIN TRANSACTION;
   IF NOT EXISTS(SELECT 1 FROM dbo.Staff WHERE StaffID=@ActorID AND Status='active' AND Role IN ('super_admin','admin','accountant')) THROW 51003,'Not authorised',1;
   IF LEN(TRIM(@Reason))=0 THROW 51001,'Reason required',1;
-  IF NOT EXISTS(SELECT 1 FROM dbo.Transactions WITH(UPDLOCK,HOLDLOCK) WHERE TxnID=@TxnID AND Status='posted' AND ReversalOfTxnID IS NULL)
+  IF NOT EXISTS(SELECT 1 FROM dbo.Transactions WITH(UPDLOCK,HOLDLOCK) WHERE TxnID=@TxnID AND Status='posted' AND ReversalOfTxnID IS NULL AND TxnType IN ('income','expense') AND (DebitAmount>0 OR CreditAmount>0))
     OR EXISTS(SELECT 1 FROM dbo.Transactions WITH(UPDLOCK,HOLDLOCK) WHERE ReversalOfTxnID=@TxnID AND Status<>'voided') THROW 51001,'Cannot reverse transaction',1;
   DECLARE @Ref NVARCHAR(50)=CONCAT('REV/',CONVERT(NVARCHAR(36),NEWID()));
   INSERT INTO dbo.Transactions(Reference,Description,AccountID,TxnType,DebitAmount,CreditAmount,Balance,PaymentMethod,PostedByID,Notes,Status,ReversalOfTxnID)
@@ -108,5 +108,13 @@ GO
 CREATE OR ALTER TRIGGER dbo.AuditLogs_AppendOnly ON dbo.AuditLogs AFTER UPDATE,DELETE AS
 BEGIN
  THROW 51001,'Audit records are append-only. Archive with the operator retention procedure.',1;
+END;
+GO
+
+CREATE OR ALTER TRIGGER dbo.Staff_KeepLastSuperAdmin ON dbo.Staff AFTER UPDATE,DELETE AS
+BEGIN
+ IF EXISTS(SELECT 1 FROM deleted WHERE Role='super_admin' AND Status='active')
+  AND NOT EXISTS(SELECT 1 FROM dbo.Staff WITH(UPDLOCK,HOLDLOCK) WHERE Role='super_admin' AND Status='active')
+  THROW 51001,'Keep at least one active super administrator.',1;
 END;
 GO
