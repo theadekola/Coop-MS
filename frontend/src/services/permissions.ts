@@ -66,6 +66,15 @@ export const defaultRoleConfigs: RoleConfig[] = [
   { id: 'staff', role: 'staff', label: 'Staff', description: 'Standard staff access with limited permissions based on department.', system: true, createdAt: now, updatedAt: now, permissions: { ...none(), dashboard: 'read', accounts: 'read', reports: 'read', chat: 'full' }, customActions: actions(), dataAccess: 'own' },
 ]
 
+
+for(const role of defaultRoleConfigs){
+ const key=role.role||role.id
+ if(['staff','loan_officer'].includes(key)) role.permissions={...none(),chat:'full'}
+ if(['accountant','auditor','cashier'].includes(key)) role.permissions.staff='none'
+ if(!['super_admin','admin','auditor'].includes(key)) role.permissions.audit='none'
+ if(!['super_admin','admin','manager'].includes(key)) role.permissions.settings='none'
+}
+
 export function normalizeRoleConfig(role: Partial<RoleConfig>): RoleConfig {
   const fallback = defaultRoleConfigs.find(item => item.id === role.id || item.role === role.role) || defaultRoleConfigs[defaultRoleConfigs.length - 1]
   return {
@@ -89,17 +98,7 @@ export function mergeSavedRoles(savedRoles: Partial<RoleConfig>[] = []): RoleCon
   return [...mergedDefaults, ...customRoles]
 }
 
-export function getCachedRoleSettings(): RolesSettings {
-  try {
-    const raw = localStorage.getItem(roleSettingsCacheKey)
-    if (!raw) return { roles: defaultRoleConfigs }
-    const parsed = JSON.parse(raw) as Partial<RolesSettings>
-    return { roles: mergeSavedRoles(parsed.roles || []) }
-  } catch {
-    localStorage.removeItem(roleSettingsCacheKey)
-    return { roles: defaultRoleConfigs }
-  }
-}
+export function getCachedRoleSettings():RolesSettings {return {roles:defaultRoleConfigs}}
 
 export function cacheRoleSettings(settings: RolesSettings): RolesSettings {
   const normalized = { roles: mergeSavedRoles(settings.roles || []) }

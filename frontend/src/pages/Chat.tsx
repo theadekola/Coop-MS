@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import toast from 'react-hot-toast'
 import { Bell, BellOff, ChevronRight, Download, FileText, Filter, MoreVertical, Paperclip, Phone, Plus, RefreshCw, Search, Send, Settings, Smile, Trash2, User, Users, Video, X } from 'lucide-react'
-import { chatApi } from '../services/api'
+import api,{ chatApi,documentsApi } from '../services/api'
 import { useAuthStore } from '../store/authStore'
 import type { ChatConversation, ChatMessage } from '../types'
 
@@ -42,6 +42,8 @@ export default function Chat() {
   const [input, setInput] = useState('')
   const [search, setSearch] = useState('')
   const [globalSearch, setGlobalSearch] = useState('')
+  const [memberIds,setMemberIds]=useState<number[]>([])
+  const [directory,setDirectory]=useState<Array<{StaffID:number;FullName:string}>>([])
   const [newRoomName, setNewRoomName] = useState('')
   const [newRoomType, setNewRoomType] = useState<ChatConversation['type']>('group')
   const [showNewChat, setShowNewChat] = useState(false)
@@ -61,10 +63,13 @@ export default function Chat() {
 
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
 
-  useEffect(() => { loadRooms() }, [])
+  useEffect(() => { loadRooms();api.get('/staff/directory').then(r=>setDirectory(r.data.data)).catch(()=>toast.error('Could not load staff directory')) }, [])
 
   useEffect(() => {
-    if (activeConv) loadMessages(activeConv.id)
+    if (!activeConv) return
+    loadMessages(activeConv.id)
+    const timer=setInterval(()=>loadMessages(activeConv.id),20000)
+    return ()=>clearInterval(timer)
   }, [activeConv?.id])
 
   useEffect(() => {
@@ -103,7 +108,7 @@ export default function Chat() {
       return
     }
     try {
-      await chatApi.createRoom({ name: newRoomName.trim(), type: newRoomType })
+      await chatApi.createRoom({ name: newRoomName.trim(), type: newRoomType, memberIds })
       setNewRoomName('')
       setShowNewChat(false)
       await loadRooms()
@@ -133,7 +138,8 @@ export default function Chat() {
       return
     }
     try {
-      const sent = await chatApi.sendMessage(activeConv.id, file.name, { type: 'file', fileName: file.name, fileSize: file.size })
+      const uploaded=await documentsApi.upload(file,activeConv.id)
+      const sent = await chatApi.sendMessage(activeConv.id, file.name, { type: 'file', documentId:uploaded.DocumentID })
       setMessages(prev => [...prev, sent])
       setConversations(prev => prev.map(room => room.id === activeConv.id ? { ...room, lastMessage: `Shared file: ${file.name}`, timestamp: sent.timestamp } : room))
       setDetailTab('files')
@@ -145,13 +151,9 @@ export default function Chat() {
     }
   }
 
-  const downloadMessageFile = (message: ChatMessage) => {
-    const url = URL.createObjectURL(new Blob([message.content || message.fileName || ''], { type: 'text/plain;charset=utf-8' }))
-    const link = document.createElement('a')
-    link.href = url
-    link.download = message.fileName || `chat-message-${message.id}.txt`
-    link.click()
-    URL.revokeObjectURL(url)
+  const downloadMessageFile = async(message:ChatMessage) => {
+    if(!message.documentId){toast.error('This legacy message has no stored document');return}
+    try{await documentsApi.download(message.documentId,message.fileName||'document')}catch{toast.error('Document unavailable or access denied')}
   }
 
   const clearVisibleMessages = () => {
@@ -443,6 +445,7 @@ export default function Chat() {
             <h3 className="text-lg font-bold text-navy">New Chat</h3>
             <p className="text-sm text-slate-500 mt-1">Create a chat room for messages and files.</p>
             <input value={newRoomName} onChange={event => setNewRoomName(event.target.value)} className="input-field mt-5" placeholder="Chat name" autoFocus />
+            <fieldset className="my-3"><legend>Invite members</legend><div className="max-h-40 overflow-auto">{directory.filter(person=>person.StaffID!==user?.id).map(person=><label className="block" key={person.StaffID}><input type="checkbox" checked={memberIds.includes(person.StaffID)} onChange={e=>setMemberIds(ids=>e.target.checked?[...ids,person.StaffID]:ids.filter(id=>id!==person.StaffID))}/> {person.FullName}</label>)}</div></fieldset>
             <select value={newRoomType} onChange={event => setNewRoomType(event.target.value as ChatConversation['type'])} className="input-field mt-3">
               <option value="group">Group</option>
               <option value="channel">Channel</option>

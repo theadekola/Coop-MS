@@ -110,7 +110,7 @@ export default function Accounts() {
       if (!form.description || !amount) throw new Error('Enter description and amount')
       if (form.paymentMethod === 'Cheque' && !form.chequeNumber.trim()) throw new Error('Enter cheque number')
       await accountsApi.createTransaction({ ...form, amount })
-      toast.success('Transaction posted')
+      toast.success(form.txnType==='expense'?'Expense submitted for independent approval':'Income posted')
       setShowModal(false)
       setForm({ description: '', accountId: 1, txnType: 'income', amount: '', paymentMethod: 'Cash', chequeNumber: '' })
       loadAccounts()
@@ -142,7 +142,7 @@ export default function Accounts() {
         </div>
         <div className="flex items-center gap-3">
           <button onClick={() => openNewTransaction('income')} className="btn-success"><Plus size={15} /> New Transaction</button>
-          <button onClick={() => openNewTransaction('transfer')} className="btn-secondary"><RefreshCw size={14} /> Transfer Funds</button>
+          <button onClick={() => toast.error('Transfers require a balanced ledger workflow and are not available yet')} className="btn-secondary"><RefreshCw size={14} /> Transfer Funds</button>
         </div>
       </div>
 
@@ -290,7 +290,7 @@ export default function Accounts() {
           <h3 className="font-bold text-slate-900 mb-4">Quick Actions</h3>
           <div className="space-y-3">
             <button onClick={() => openNewTransaction('income')} className="w-full flex items-center gap-3 border border-slate-200 rounded-lg p-3 text-left text-sm font-medium hover:bg-slate-50"><Plus size={15} className="text-coop-blue" /> Add New Transaction</button>
-            <button onClick={() => openNewTransaction('transfer')} className="w-full flex items-center gap-3 border border-slate-200 rounded-lg p-3 text-left text-sm font-medium hover:bg-slate-50"><RefreshCw size={15} className="text-coop-blue" /> Transfer Between Accounts</button>
+            <button onClick={() => toast.error('Transfers require a balanced ledger workflow and are not available yet')} className="w-full flex items-center gap-3 border border-slate-200 rounded-lg p-3 text-left text-sm font-medium hover:bg-slate-50"><RefreshCw size={15} className="text-coop-blue" /> Transfer Between Accounts</button>
             <button onClick={() => navigate('/trial-balance')} className="w-full flex items-center gap-3 border border-slate-200 rounded-lg p-3 text-left text-sm font-medium hover:bg-slate-50"><Landmark size={15} className="text-coop-blue" /> Bank Reconciliation</button>
             <button onClick={() => navigate('/chart-of-accounts')} className="w-full flex items-center gap-3 border border-slate-200 rounded-lg p-3 text-left text-sm font-medium hover:bg-slate-50"><FileText size={15} className="text-coop-blue" /> Chart of Accounts</button>
           </div>
@@ -341,7 +341,7 @@ export default function Accounts() {
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">Type</label>
                   <select value={form.txnType} onChange={event => setForm(prev => ({ ...prev, txnType: event.target.value as TransactionType }))} className="input-field">
-                    <option value="income">Income</option><option value="expense">Expense</option><option value="transfer">Transfer</option>
+                    <option value="income">Income</option><option value="expense">Expense</option>
                   </select>
                 </div>
               </div>

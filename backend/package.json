@@ -8,7 +8,11 @@
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
     "build": "tsc",
     "db:migrate": "ts-node src/config/migrate.ts",
-    "db:seed": "ts-node src/config/seed.ts"
+    "db:seed": "ts-node src/config/seed.ts",
+    "test": "npm run build && node --test test/*.test.cjs",
+    "test:sql": "node --test test/sql.integration.cjs",
+    "db:security": "ts-node src/config/migrate.ts --security",
+    "db:encrypt": "ts-node src/config/encrypt-existing.ts"
   },
   "dependencies": {
     "express": "^4.19.2",
@@ -23,7 +27,7 @@
     "joi": "^17.13.3",
     "nodemailer": "^6.9.14",
     "otplib": "^12.0.1",
-    "multer": "^1.4.5-lts.1",
+    "multer": "^2.0.2",
     "winston": "^3.13.0",
     "compression": "^1.7.4",
     "express-validator": "^7.1.0",
@@ -41,6 +45,7 @@
     "@types/uuid": "^10.0.0",
     "@types/node": "^22.0.0",
     "typescript": "^5.5.3",
-    "ts-node-dev": "^2.0.0"
+    "ts-node-dev": "^2.0.0",
+    "socket.io-client": "^4.8.1"
   }
 }

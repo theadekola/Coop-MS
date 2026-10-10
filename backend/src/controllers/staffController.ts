@@ -1,3 +1,5 @@
+import {pagination} from '../security/validation'
+import {text,email as validateEmail,password as validatePassword,HttpError,errorResponse} from '../security/validation'
 import { Response } from 'express'
 import bcrypt from 'bcryptjs'
 import { randomBytes } from 'crypto'
@@ -13,17 +15,10 @@ async function resolveDeptId(pool: any, deptId?: number, department?: string): P
   return result.recordset[0]?.DeptID ?? null
 }
 
-async function ensurePasswordResetKeyColumn(pool: any): Promise<void> {
-  await pool.request().query(`
-    IF COL_LENGTH('Staff', 'PasswordResetKeyHash') IS NULL
-      ALTER TABLE Staff ADD PasswordResetKeyHash NVARCHAR(500) NULL;
-  `)
-}
-
 export async function getAllStaff(req: AuthRequest, res: Response): Promise<void> {
   try {
     const { search, dept, role, status, page = 1, limit = 20 } = req.query
-    const offset = (Number(page) - 1) * Number(limit)
+    const {offset,limit:boundedLimit} = pagination(page,limit)
 
     const pool = await getPool()
     let query = `SELECT s.StaffID, s.EmployeeID, s.FullName, s.Email, s.Phone, s.Role, s.Status,
@@ -37,14 +32,14 @@ export async function getAllStaff(req: AuthRequest, res: Response): Promise<void
     if (role) { query += ` AND s.Role = @Role`; req2.input('Role', sql.NVarChar, role as string) }
     if (status) { query += ` AND s.Status = @Status`; req2.input('Status', sql.NVarChar, status as string) }
 
-    query += ` ORDER BY s.FullName OFFSET ${offset} ROWS FETCH NEXT ${Number(limit)} ROWS ONLY`
+    query += ` ORDER BY s.FullName OFFSET ${offset} ROWS FETCH NEXT ${boundedLimit} ROWS ONLY`
     const result = await req2.query(query)
 
     const countResult = await pool.request().query(`SELECT COUNT(*) as total FROM Staff`)
     res.json({ success: true, data: result.recordset, total: countResult.recordset[0].total, page: Number(page), limit: Number(limit) })
   } catch (err) {
     console.error(err)
-    res.status(500).json({ success: false, message: 'Server error' })
+    errorResponse(res,err)
   }
 }
 
@@ -52,40 +47,39 @@ export async function getStaffById(req: AuthRequest, res: Response): Promise<voi
   try {
     const pool = await getPool()
     const result = await pool.request().input('StaffID', sql.Int, req.params.id)
-      .query(`SELECT s.*, d.DeptName as Department FROM Staff s LEFT JOIN Departments d ON s.DeptID = d.DeptID WHERE s.StaffID = @StaffID`)
+      .query(`SELECT s.StaffID,s.EmployeeID,s.FullName,s.Email,s.Phone,s.Role,s.Status,s.JoinedDate,s.LastLogin,s.TwoFactorEnabled,s.PhotoPath,d.DeptName as Department FROM Staff s LEFT JOIN Departments d ON s.DeptID = d.DeptID WHERE s.StaffID = @StaffID`)
     if (!result.recordset[0]) { res.status(404).json({ success: false, message: 'Staff not found' }); return }
     const { PasswordHash, PasswordResetKeyHash, RefreshToken, TwoFactorSecret, ...staff } = result.recordset[0]
     res.json({ success: true, data: staff })
   } catch (err) {
-    res.status(500).json({ success: false, message: 'Server error' })
+    errorResponse(res,err)
   }
 }
 
 export async function createStaff(req: AuthRequest, res: Response): Promise<void> {
   try {
-    const { fullName, email, phone, role, deptId, department, password, passwordResetKey } = req.body
+    const { role,deptId,department } = req.body
+    const fullName=text(req.body.fullName,200,'Name'),email=validateEmail(req.body.email),phone=text(req.body.phone,20,'Phone'),password=validatePassword(req.body.password)
+    if(!['super_admin','admin','accountant','auditor','cashier','loan_officer','manager','staff'].includes(role)) throw new HttpError(400,'Invalid role')
     if (!fullName || !email || !phone || !role || !password) { res.status(400).json({ success: false, message: 'Required fields missing' }); return }
-    if (String(password).length < 8) { res.status(400).json({ success: false, message: 'Password must be at least 8 characters' }); return }
-    if (passwordResetKey && String(passwordResetKey).trim().length < 4) { res.status(400).json({ success: false, message: 'Password Reset Key must be at least 4 characters' }); return }
-    if (role === 'super_admin' && req.user!.role !== 'super_admin') {
+    if (typeof password !== 'string' || password.length < 12 || Buffer.byteLength(password)>72) { res.status(400).json({ success: false, message: 'Password must be at least 12 characters' }); return }
+
+    if (['super_admin','admin'].includes(role) && req.user!.role !== 'super_admin') {
       res.status(403).json({ success: false, message: 'Only Super Admin can create another Super Admin account' })
       return
     }
 
     const pool = await getPool()
-    await ensurePasswordResetKeyColumn(pool)
     const existsResult = await pool.request().input('Email', sql.NVarChar, email.toLowerCase())
       .query('SELECT StaffID FROM Staff WHERE Email = @Email')
     if (existsResult.recordset.length > 0) { res.status(409).json({ success: false, message: 'Email already exists' }); return }
     const resolvedDeptId = await resolveDeptId(pool, deptId, department)
 
     // Generate employee ID
-    const lastResult = await pool.request().query("SELECT TOP 1 EmployeeID FROM Staff ORDER BY StaffID DESC")
-    const lastNum = lastResult.recordset[0] ? parseInt(lastResult.recordset[0].EmployeeID.replace('EXC', '')) : 0
-    const employeeId = `EXC${String(lastNum + 1).padStart(3, '0')}`
+    const employeeId = `EXC${randomBytes(8).toString('hex')}`
 
     const passwordHash = await bcrypt.hash(password, 12)
-    const passwordResetKeyHash = passwordResetKey ? await bcrypt.hash(String(passwordResetKey).trim(), 12) : null
+    const passwordResetKeyHash = null
     const result = await pool.request()
       .input('EmployeeID', sql.NVarChar, employeeId)
       .input('FullName', sql.NVarChar, fullName)
@@ -110,7 +104,7 @@ export async function createStaff(req: AuthRequest, res: Response): Promise<void
     res.status(201).json({ success: true, message: 'Staff created successfully', data: { staffId: result.recordset[0].StaffID, employeeId } })
   } catch (err) {
     console.error(err)
-    res.status(500).json({ success: false, message: 'Server error' })
+    errorResponse(res,err)
   }
 }
 
@@ -118,22 +112,25 @@ export async function updateStaff(req: AuthRequest, res: Response): Promise<void
   try {
     const { fullName, email, phone, role, deptId, department, status, passwordResetKey } = req.body
     const pool = await getPool()
-    await ensurePasswordResetKeyColumn(pool)
     const targetResult = await pool.request()
       .input('StaffID', sql.Int, req.params.id)
       .query('SELECT StaffID, Role FROM Staff WHERE StaffID = @StaffID')
     const target = targetResult.recordset[0]
     if (!target) { res.status(404).json({ success: false, message: 'Staff not found' }); return }
-    if (target.Role === 'super_admin' && req.user!.role !== 'super_admin') {
+    if (['super_admin','admin'].includes(target.Role) && req.user!.role !== 'super_admin') {
       res.status(403).json({ success: false, message: 'Only Super Admin can update a Super Admin account' })
       return
     }
-    if (role === 'super_admin' && req.user!.role !== 'super_admin') {
+    if (['super_admin','admin'].includes(role) && req.user!.role !== 'super_admin') {
       res.status(403).json({ success: false, message: 'Only Super Admin can assign the Super Admin role' })
       return
     }
+    if(target.Role==='super_admin' && ((role && role!=='super_admin') || (status && status!=='active'))){
+      const others=await pool.request().input('ID',sql.Int,target.StaffID).query("SELECT COUNT(*) AS Total FROM Staff WHERE StaffID<>@ID AND Role='super_admin' AND Status='active'")
+      if(!others.recordset[0].Total){res.status(409).json({success:false,message:'Keep at least one active super administrator'});return}
+    }
     const resolvedDeptId = await resolveDeptId(pool, deptId, department)
-    const passwordResetKeyHash = passwordResetKey ? await bcrypt.hash(String(passwordResetKey).trim(), 12) : null
+    const passwordResetKeyHash = null
     await pool.request()
       .input('StaffID', sql.Int, req.params.id)
       .input('FullName', sql.NVarChar, fullName)
@@ -151,6 +148,7 @@ export async function updateStaff(req: AuthRequest, res: Response): Promise<void
                   DeptID = COALESCE(@DeptID, DeptID),
                   Status = COALESCE(@Status, Status),
                   PasswordResetKeyHash = COALESCE(@PasswordResetKeyHash, PasswordResetKeyHash),
+                  TokenVersion = TokenVersion+1,
                   UpdatedAt = GETDATE()
               WHERE StaffID = @StaffID`)
 
@@ -162,7 +160,7 @@ export async function updateStaff(req: AuthRequest, res: Response): Promise<void
 
     res.json({ success: true, message: 'Staff updated successfully' })
   } catch (err) {
-    res.status(500).json({ success: false, message: 'Server error' })
+    errorResponse(res,err)
   }
 }
 
@@ -175,18 +173,18 @@ export async function resetStaffPassword(req: AuthRequest, res: Response): Promi
 
     const staff = staffResult.recordset[0]
     if (!staff) { res.status(404).json({ success: false, message: 'Staff not found' }); return }
-    if (staff.Role === 'super_admin' && req.user!.role !== 'super_admin') {
+    if (['super_admin','admin'].includes(staff.Role) && req.user!.role !== 'super_admin') {
       res.status(403).json({ success: false, message: 'Only Super Admin can reset a Super Admin password' })
       return
     }
 
-    const temporaryPassword = `Temp@${randomBytes(4).toString('hex')}`
+    const temporaryPassword = `Temp@${randomBytes(16).toString('hex')}`
     const passwordHash = await bcrypt.hash(temporaryPassword, 12)
 
     await pool.request()
       .input('StaffID', sql.Int, req.params.id)
       .input('PasswordHash', sql.NVarChar, passwordHash)
-      .query('UPDATE Staff SET PasswordHash = @PasswordHash, UpdatedAt = GETDATE() WHERE StaffID = @StaffID')
+      .query('UPDATE Staff SET PasswordHash = @PasswordHash, TokenVersion=TokenVersion+1, UpdatedAt = GETDATE() WHERE StaffID = @StaffID')
 
     await pool.request()
       .input('StaffID', sql.Int, req.user!.staffId)
@@ -198,7 +196,7 @@ export async function resetStaffPassword(req: AuthRequest, res: Response): Promi
     res.json({ success: true, message: 'Password reset successfully', data: { temporaryPassword } })
   } catch (err) {
     console.error(err)
-    res.status(500).json({ success: false, message: 'Server error' })
+    errorResponse(res,err)
   }
 }
 
@@ -215,6 +213,10 @@ export async function getDashboardStats(req: AuthRequest, res: Response): Promis
     `)
     res.json({ success: true, data: result.recordset[0] })
   } catch (err) {
-    res.status(500).json({ success: false, message: 'Server error' })
+    errorResponse(res,err)
   }
+}
+
+export async function getDirectory(_req:AuthRequest,res:Response):Promise<void> {
+ try{const result=await (await getPool()).request().query("SELECT StaffID,FullName FROM Staff WHERE Status='active' ORDER BY FullName");res.json({success:true,data:result.recordset})}catch{res.status(500).json({success:false,message:'Directory unavailable'})}
 }

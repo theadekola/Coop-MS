@@ -1,0 +1,32 @@
+-- Run as the migration operator, then add only the dedicated application user
+-- to coop_runtime. Do not add it to db_owner, db_datawriter or server roles.
+IF DATABASE_PRINCIPAL_ID('coop_runtime') IS NULL CREATE ROLE coop_runtime;
+GRANT SELECT,INSERT,UPDATE ON dbo.Staff TO coop_runtime;
+GRANT SELECT ON dbo.Departments TO coop_runtime;
+GRANT SELECT ON dbo.AccountTypes TO coop_runtime;
+GRANT SELECT ON dbo.ChartOfAccounts TO coop_runtime;
+GRANT SELECT ON dbo.Transactions TO coop_runtime;
+GRANT SELECT ON dbo.Approvals TO coop_runtime;
+GRANT SELECT,INSERT ON dbo.AuditLogs TO coop_runtime;
+GRANT SELECT,INSERT,UPDATE ON dbo.AuthSessions TO coop_runtime;
+GRANT SELECT,INSERT,UPDATE ON dbo.AuthChallenges TO coop_runtime;
+GRANT SELECT,INSERT ON dbo.AuthUsedOtps TO coop_runtime;
+GRANT SELECT,INSERT ON dbo.ChatRooms TO coop_runtime;
+GRANT SELECT,INSERT ON dbo.ChatRoomMembers TO coop_runtime;
+GRANT SELECT,INSERT ON dbo.ChatMessages TO coop_runtime;
+GRANT SELECT,INSERT ON dbo.MessageReadReceipts TO coop_runtime;
+GRANT SELECT,INSERT ON dbo.PrivateDocuments TO coop_runtime;
+GRANT SELECT,INSERT ON dbo.DocumentGrants TO coop_runtime;
+GRANT SELECT,INSERT,UPDATE ON dbo.SystemSettings TO coop_runtime;
+GRANT SELECT,INSERT ON dbo.Announcements TO coop_runtime;
+GRANT SELECT,INSERT ON dbo.Reports TO coop_runtime;
+GRANT EXECUTE ON dbo.SubmitTransaction TO coop_runtime;
+GRANT EXECUTE ON dbo.RequestReversal TO coop_runtime;
+GRANT EXECUTE ON dbo.ReviewApproval TO coop_runtime;
+DENY INSERT,UPDATE,DELETE ON dbo.Transactions TO coop_runtime;
+DENY INSERT,UPDATE,DELETE ON dbo.Approvals TO coop_runtime;
+DENY UPDATE,DELETE ON dbo.AuditLogs TO coop_runtime;
+DENY ALTER ON SCHEMA::dbo TO coop_runtime;
+DENY SELECT,INSERT,UPDATE,DELETE ON dbo.BootstrapState TO coop_runtime;
+DENY SELECT,INSERT,UPDATE,DELETE ON dbo.OTPTokens TO coop_runtime;
+DENY SELECT,INSERT,UPDATE,DELETE ON dbo.PasswordResets TO coop_runtime;

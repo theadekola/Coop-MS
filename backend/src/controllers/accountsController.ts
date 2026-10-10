@@ -1,12 +1,13 @@
+import {pagination} from '../security/validation'
 import { Response } from 'express'
 import { getPool, sql } from '../config/database'
 import type { AuthRequest } from '../middleware/auth'
-import { v4 as uuidv4 } from 'uuid'
+import { HttpError, id, text, amount, errorResponse } from '../security/validation'
 
 export async function getTransactions(req: AuthRequest, res: Response): Promise<void> {
   try {
     const { account, type, from, to, page = 1, limit = 20, search } = req.query
-    const offset = (Number(page) - 1) * Number(limit)
+    const {offset,limit:boundedLimit} = pagination(page,limit)
     const pool = await getPool()
 
     let query = `SELECT t.TxnID, t.Reference, t.TxnDate, t.Description, t.TxnType, 
@@ -24,7 +25,7 @@ export async function getTransactions(req: AuthRequest, res: Response): Promise<
     if (from) { query += ` AND t.TxnDate >= @From`; req2.input('From', sql.Date, from as string) }
     if (to) { query += ` AND t.TxnDate <= @To`; req2.input('To', sql.Date, to as string) }
 
-    query += ` ORDER BY t.TxnDate DESC, t.TxnID DESC OFFSET ${offset} ROWS FETCH NEXT ${Number(limit)} ROWS ONLY`
+    query += ` ORDER BY t.TxnDate DESC, t.TxnID DESC OFFSET ${offset} ROWS FETCH NEXT ${boundedLimit} ROWS ONLY`
     const result = await req2.query(query)
     const countResult = await pool.request().query('SELECT COUNT(*) as total FROM Transactions WHERE Status != \'voided\'')
     res.json({ success: true, data: result.recordset, total: countResult.recordset[0].total })
@@ -34,53 +35,28 @@ export async function getTransactions(req: AuthRequest, res: Response): Promise<
   }
 }
 
-export async function createTransaction(req: AuthRequest, res: Response): Promise<void> {
+export async function createTransaction(req:AuthRequest,res:Response):Promise<void> {
   try {
-    const { description, accountId, txnType, amount, paymentMethod, chequeNumber, notes } = req.body
-    if (!description || !accountId || !txnType || !amount) {
-      res.status(400).json({ success: false, message: 'Required fields missing' }); return
-    }
-    if (paymentMethod === 'Cheque' && !String(chequeNumber || '').trim()) {
-      res.status(400).json({ success: false, message: 'Cheque number is required for cheque payments' }); return
-    }
-
-    const prefix = txnType === 'income' ? 'INC' : txnType === 'expense' ? 'EXP' : 'TFR'
-    const reference = `${prefix}/${String(Math.floor(Math.random() * 99999)).padStart(5, '0')}`
-
-    // Get current balance
-    const pool = await getPool()
-    const balResult = await pool.request().input('AccountID', sql.Int, accountId)
-      .query('SELECT TOP 1 Balance FROM Transactions WHERE AccountID = @AccountID ORDER BY TxnID DESC')
-    const prevBalance = balResult.recordset[0]?.Balance || 0
-    const newBalance = txnType === 'income' ? prevBalance + Number(amount) : prevBalance - Number(amount)
-
-    await pool.request()
-      .input('Reference', sql.NVarChar, reference)
-      .input('Description', sql.NVarChar, description)
-      .input('AccountID', sql.Int, accountId)
-      .input('TxnType', sql.NVarChar, txnType)
-      .input('DebitAmount', sql.Decimal(18, 2), txnType === 'income' ? amount : 0)
-      .input('CreditAmount', sql.Decimal(18, 2), txnType === 'expense' ? amount : 0)
-      .input('Balance', sql.Decimal(18, 2), newBalance)
-      .input('PaymentMethod', sql.NVarChar, paymentMethod || 'Cash')
-      .input('ChequeNumber', sql.NVarChar, paymentMethod === 'Cheque' ? String(chequeNumber).trim() : null)
-      .input('PostedByID', sql.Int, req.user!.staffId)
-      .input('Notes', sql.NVarChar, notes || null)
-      .query(`INSERT INTO Transactions (Reference, Description, AccountID, TxnType, DebitAmount, CreditAmount, Balance, PaymentMethod, ChequeNumber, PostedByID, Notes)
-              VALUES (@Reference, @Description, @AccountID, @TxnType, @DebitAmount, @CreditAmount, @Balance, @PaymentMethod, @ChequeNumber, @PostedByID, @Notes)`)
-
-    await pool.request()
-      .input('StaffID', sql.Int, req.user!.staffId)
-      .input('Description', sql.NVarChar, `Created ${txnType}: ${description}`)
-      .input('NewValue', sql.NVarChar, `₦${Number(amount).toLocaleString()}`)
-      .input('IPAddress', sql.NVarChar, req.ip || '')
-      .query(`INSERT INTO AuditLogs (StaffID, ActionType, Module, Description, NewValue, IPAddress) VALUES (@StaffID, 'CREATE', 'Accounts', @Description, @NewValue, @IPAddress)`)
-
-    res.status(201).json({ success: true, message: 'Transaction posted', data: { reference, newBalance } })
-  } catch (err) {
-    console.error(err)
-    res.status(500).json({ success: false, message: 'Server error' })
-  }
+    const {txnType,paymentMethod='Cash'}=req.body
+    if(!['income','expense'].includes(txnType)) throw new HttpError(400,'Use income or expense; unbalanced transfers are not supported')
+    if(!['Cash','Bank Transfer','Cheque','POS','Card'].includes(paymentMethod)) throw new HttpError(400,'Invalid payment method')
+    const result=await (await getPool()).request().input('ActorID',sql.Int,req.user!.staffId)
+      .input('Description',sql.NVarChar(500),text(req.body.description,500,'Description')).input('AccountID',sql.Int,id(req.body.accountId))
+      .input('TxnType',sql.NVarChar(20),txnType).input('Amount',sql.Decimal(18,2),amount(req.body.amount))
+      .input('PaymentMethod',sql.NVarChar(50),paymentMethod).input('ChequeNumber',sql.NVarChar(100),paymentMethod==='Cheque'?text(req.body.chequeNumber,100,'Cheque number'):null)
+      .input('Notes',sql.NVarChar(1000),req.body.notes?text(req.body.notes,1000,'Notes'):null).execute('dbo.SubmitTransaction')
+    res.status(201).json({success:true,data:result.recordset[0],message:txnType==='expense'?'Expense submitted for independent approval':'Income posted'})
+  } catch(err){financeError(res,err)}
+}
+export async function reverseTransaction(req:AuthRequest,res:Response):Promise<void> {
+  try {
+    const result=await (await getPool()).request().input('ActorID',sql.Int,req.user!.staffId).input('TxnID',sql.Int,id(req.params.id))
+      .input('Reason',sql.NVarChar(500),text(req.body.reason,500,'Reversal reason')).execute('dbo.RequestReversal')
+    res.status(201).json({success:true,data:result.recordset[0],message:'Reversal submitted for independent approval'})
+  } catch(err){financeError(res,err)}
+}
+export function financeError(res:Response,err:any):void {
+  errorResponse(res,err?.number===51003?new HttpError(403,'Financial operation is not authorised'):err?.number===51001?new HttpError(409,'The item has already changed or cannot be processed'):err)
 }
 
 export async function getAccountSummary(req: AuthRequest, res: Response): Promise<void> {

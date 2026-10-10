@@ -25,17 +25,7 @@ export default defineConfig({
       workbox: {
         cleanupOutdatedCaches: true,
         navigateFallback: '/index.html',
-        runtimeCaching: [
-          {
-            urlPattern: ({ url }) => url.pathname.startsWith('/api'),
-            handler: 'NetworkFirst',
-            options: {
-              cacheName: 'oshodi-coop-api',
-              networkTimeoutSeconds: 5,
-              expiration: { maxEntries: 80, maxAgeSeconds: 60 * 60 },
-            },
-          },
-        ],
+        runtimeCaching: [{urlPattern: ({url}) => url.pathname.startsWith('/api'), handler: 'NetworkOnly'}],
       },
     }),
   ],

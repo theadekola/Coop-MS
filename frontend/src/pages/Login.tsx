@@ -16,6 +16,8 @@ export default function Login() {
   const [language, setLanguage] = useState<'en' | 'yo'>('en')
   const [showPass, setShowPass] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [challengeId,setChallengeId]=useState('')
+  const [otp,setOtp]=useState('')
   const [supportModal, setSupportModal] = useState<'password' | 'support' | null>(null)
   const [supportForm, setSupportForm] = useState({ name: '', email: '', phone: '', message: '' })
   const [brand, setBrand] = useState(() => ({ companyName: 'Oshodi Isolo Excel Cooperative', logoDataUrl: '', faviconDataUrl: '', ...readCachedCompanyBrand() }))
@@ -34,8 +36,8 @@ export default function Login() {
       auditDesc: 'Maintain transparency with complete audit trails and logs.',
       signInTitle: 'Sign in to your account',
       signInSub: 'Enter your credentials to access the system',
-      username: 'Username or Email',
-      usernamePlaceholder: 'Enter your username or email',
+      username: 'Email address',
+      usernamePlaceholder: 'Enter your email address',
       password: 'Password',
       passwordPlaceholder: 'Enter your password',
       remember: 'Remember me',
@@ -135,10 +137,11 @@ export default function Login() {
     e.preventDefault()
     setLoading(true)
     try {
-      const result = await authApi.login(form.emailOrUsername, form.password)
+      const result = challengeId ? await authApi.verify2FA(challengeId,otp) : await authApi.login(form.emailOrUsername, form.password)
+      if ('challengeId' in result && result.challengeId) {setChallengeId(result.challengeId);setForm(f=>({...f,password:''}));return}
       if (result.token && result.user) {
         login(result.token, result.user)
-        navigate('/dashboard')
+        navigate(['staff','loan_officer'].includes(result.user.role)?'/chat':'/dashboard')
         toast.success('Signed in successfully')
       }
     } catch (err) {
@@ -235,6 +238,7 @@ export default function Login() {
               <p className="text-slate-500 text-sm mt-1">{text.signInSub}</p>
             </div>
             <form onSubmit={handleLogin} className="space-y-4">
+              {challengeId && <div><label htmlFor="otp">Authenticator code</label><input id="otp" className="input-field" autoComplete="one-time-code" inputMode="numeric" maxLength={6} value={otp} onChange={e=>setOtp(e.target.value)} required/><button type="button" onClick={()=>{setChallengeId('');setOtp('')}}>Restart sign in</button></div>}
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1.5">{text.username}</label>
                 <div className="relative">

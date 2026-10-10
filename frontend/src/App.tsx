@@ -77,7 +77,7 @@ export default function App() {
           <Route path="settings/financial" element={<ProtectedRoute module="settings"><FinancialSettings /></ProtectedRoute>} />
           <Route path="settings/tax" element={<ProtectedRoute module="settings"><TaxSettings /></ProtectedRoute>} />
           <Route path="settings/notifications" element={<ProtectedRoute module="settings"><Notifications /></ProtectedRoute>} />
-          <Route path="settings/security" element={<ProtectedRoute module="settings"><Security /></ProtectedRoute>} />
+          <Route path="settings/security" element={<Security />} />
           <Route path="settings/password-reset" element={<ProtectedRoute module="settings"><PasswordReset /></ProtectedRoute>} />
           <Route path="settings/system-logs" element={<ProtectedRoute module="settings"><SystemLogs /></ProtectedRoute>} />
           <Route path="settings/backup-restore" element={<ProtectedRoute module="settings"><BackupRestore /></ProtectedRoute>} />

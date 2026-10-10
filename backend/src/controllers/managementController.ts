@@ -1,3 +1,5 @@
+import { HttpError,id,text } from '../security/validation'
+import { financeError } from './accountsController'
 import { Response } from 'express'
 import { getPool, sql } from '../config/database'
 import type { AuthRequest } from '../middleware/auth'
@@ -30,32 +32,13 @@ export async function getApprovals(req: AuthRequest, res: Response): Promise<voi
   }
 }
 
-export async function reviewApproval(req: AuthRequest, res: Response): Promise<void> {
+export async function reviewApproval(req:AuthRequest,res:Response):Promise<void> {
   try {
-    const { status, comments } = req.body
-    if (!['approved', 'rejected'].includes(status)) {
-      res.status(400).json({ success: false, message: 'Status must be approved or rejected' })
-      return
-    }
-    const pool = await getPool()
-    await pool.request()
-      .input('ApprovalID', sql.Int, req.params.id)
-      .input('Status', sql.NVarChar, status)
-      .input('Comments', sql.NVarChar, comments || null)
-      .input('ReviewedByID', sql.Int, req.user!.staffId)
-      .query(`UPDATE Approvals SET Status=@Status, Comments=@Comments, ReviewedByID=@ReviewedByID, ReviewedAt=GETDATE() WHERE ApprovalID=@ApprovalID`)
-
-    await pool.request()
-      .input('StaffID', sql.Int, req.user!.staffId)
-      .input('Description', sql.NVarChar, `Approval ${req.params.id} ${status}`)
-      .input('IPAddress', sql.NVarChar, req.ip || '')
-      .query(`INSERT INTO AuditLogs (StaffID, ActionType, Module, Description, IPAddress) VALUES (@StaffID, 'UPDATE', 'Management', @Description, @IPAddress)`)
-
-    res.json({ success: true, message: `Approval ${status}` })
-  } catch (err) {
-    console.error(err)
-    res.status(500).json({ success: false, message: 'Server error' })
-  }
+    if(!['approved','rejected'].includes(req.body.status)) throw new HttpError(400,'Status must be approved or rejected')
+    await (await getPool()).request().input('ActorID',sql.Int,req.user!.staffId).input('ApprovalID',sql.Int,id(req.params.id))
+      .input('Decision',sql.NVarChar(20),req.body.status).input('Comments',sql.NVarChar(1000),req.body.comments?text(req.body.comments,1000,'Comments'):null).execute('dbo.ReviewApproval')
+    res.json({success:true,message:`Approval ${req.body.status}`})
+  } catch(err){financeError(res,err)}
 }
 
 export async function getAnnouncements(req: AuthRequest, res: Response): Promise<void> {
