@@ -3,8 +3,8 @@ module.exports = {
     {
       name: 'oshodi-coop-api',
       script: 'dist/index.js',
-      instances: 'max',
-      exec_mode: 'cluster',
+      instances: 1,
+      exec_mode: 'fork',
       env: { NODE_ENV: 'production', PORT: 5000 },
       env_development: { NODE_ENV: 'development', PORT: 5000 },
       error_file: './logs/err.log',

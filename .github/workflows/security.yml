@@ -1,0 +1,49 @@
+name: Security and integration
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    services:
+      sql:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: Y
+          # Disposable CI database only; never a deployment credential.
+          MSSQL_SA_PASSWORD: CI-only-CoopMS-Database-27!
+        ports: [1433:1433]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            backend/package-lock.json
+            frontend/package-lock.json
+      - run: npm ci
+        working-directory: backend
+      - run: npm test
+        working-directory: backend
+      - name: Wait for disposable SQL Server
+        working-directory: backend
+        run: |
+          node -e "const sql=require('mssql');(async()=>{for(let i=0;i<30;i++){try{const p=await new sql.ConnectionPool({server:'localhost',user:'sa',password:process.env.TEST_DB_PASSWORD,options:{encrypt:true,trustServerCertificate:true}}).connect();await p.close();return}catch{await new Promise(r=>setTimeout(r,2000))}}process.exit(1)})()"
+        env:
+          TEST_DB_PASSWORD: CI-only-CoopMS-Database-27!
+      - run: npm run test:sql
+        working-directory: backend
+        env:
+          TEST_DB_NAME: CoopMS_Security_Test
+          TEST_DB_USER: sa
+          TEST_DB_PASSWORD: CI-only-CoopMS-Database-27!
+      - run: npm ci && npm run build
+        working-directory: frontend
+      - run: npx playwright install --with-deps chromium
+        working-directory: frontend
+      - run: npm run test:browser
+        working-directory: frontend

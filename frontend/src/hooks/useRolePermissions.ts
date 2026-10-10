@@ -79,7 +79,7 @@ export const useRolePermissions = () => {
     const isAdmin = roleKey === 'admin'
     const permissions = {
       ...defaultRolePermissions(roleKey),
-      ...(loadSavedPermissions(roleKey) || {}),
+
     }
 
     const getModuleLevel = (moduleName: string): PermissionLevel => {

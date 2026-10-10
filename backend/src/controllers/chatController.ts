@@ -1,39 +1,13 @@
 import { Response } from 'express'
 import { getPool, sql } from '../config/database'
+import { chatLimiter, createMessage, chatError } from '../security/chat'
+import { id, text, HttpError, errorResponse } from '../security/validation'
 import type { AuthRequest } from '../middleware/auth'
-
-async function ensureDefaultRoom(staffId: number): Promise<void> {
-  const pool = await getPool()
-  const existing = await pool.request()
-    .input('StaffID', sql.Int, staffId)
-    .query(`
-      SELECT TOP 1 r.RoomID
-      FROM ChatRooms r
-      INNER JOIN ChatRoomMembers m ON r.RoomID = m.RoomID
-      WHERE m.StaffID = @StaffID
-      ORDER BY r.CreatedAt
-    `)
-
-  if (existing.recordset.length > 0) return
-
-  const created = await pool.request()
-    .input('CreatedByID', sql.Int, staffId)
-    .query(`
-      INSERT INTO ChatRooms (RoomName, RoomType, CreatedByID)
-      OUTPUT INSERTED.RoomID
-      VALUES ('General', 'channel', @CreatedByID)
-    `)
-
-  await pool.request()
-    .input('RoomID', sql.Int, created.recordset[0].RoomID)
-    .input('StaffID', sql.Int, staffId)
-    .query('INSERT INTO ChatRoomMembers (RoomID, StaffID) VALUES (@RoomID, @StaffID)')
-}
 
 export async function getRooms(req: AuthRequest, res: Response): Promise<void> {
   try {
     const staffId = req.user!.staffId
-    await ensureDefaultRoom(staffId)
+
     const pool = await getPool()
     const result = await pool.request()
       .input('StaffID', sql.Int, staffId)
@@ -61,42 +35,30 @@ export async function getRooms(req: AuthRequest, res: Response): Promise<void> {
   }
 }
 
-export async function createRoom(req: AuthRequest, res: Response): Promise<void> {
+export async function createRoom(req:AuthRequest,res:Response):Promise<void> {
+  let tx:sql.Transaction|undefined
   try {
-    const staffId = req.user!.staffId
-    const { name, type = 'group', memberIds = [] } = req.body
-    if (!name) { res.status(400).json({ success: false, message: 'Room name is required' }); return }
-
-    const pool = await getPool()
-    const created = await pool.request()
-      .input('RoomName', sql.NVarChar, name)
-      .input('RoomType', sql.NVarChar, type)
-      .input('CreatedByID', sql.Int, staffId)
-      .query(`
-        INSERT INTO ChatRooms (RoomName, RoomType, CreatedByID)
-        OUTPUT INSERTED.RoomID, INSERTED.RoomName, INSERTED.RoomType, INSERTED.CreatedAt
-        VALUES (@RoomName, @RoomType, @CreatedByID)
-      `)
-
-    const roomId = created.recordset[0].RoomID
-    const uniqueMembers = Array.from(new Set([staffId, ...memberIds.map((id: unknown) => Number(id)).filter(Boolean)]))
-    for (const memberId of uniqueMembers) {
-      await pool.request()
-        .input('RoomID', sql.Int, roomId)
-        .input('StaffID', sql.Int, memberId)
-        .query('INSERT INTO ChatRoomMembers (RoomID, StaffID) VALUES (@RoomID, @StaffID)')
+    chatLimiter.take(req.user!.staffId)
+    const name=text(req.body.name,200,'Room name'),type=req.body.type||'group'
+    if (!['group','direct','channel'].includes(type) || !Array.isArray(req.body.memberIds||[]) || (req.body.memberIds||[]).length>100) throw new HttpError(400,'Invalid room or members')
+    const memberIds=[...new Set<number>([req.user!.staffId,...(req.body.memberIds||[]).map(id)])]
+    if(type==='direct' && memberIds.length!==2) throw new HttpError(400,'Direct chats require two members')
+    tx=new sql.Transaction(await getPool()); await tx.begin(sql.ISOLATION_LEVEL.SERIALIZABLE)
+    for(const staffId of memberIds) {
+      const staff=await new sql.Request(tx).input('ID',sql.Int,staffId).query("SELECT StaffID FROM Staff WHERE StaffID=@ID AND Status='active'")
+      if(!staff.recordset.length) throw new HttpError(400,'All members must be active staff')
     }
-
-    res.status(201).json({ success: true, data: created.recordset[0], message: 'Chat room created' })
-  } catch (err) {
-    console.error('Create chat room error:', err)
-    res.status(500).json({ success: false, message: 'Could not create chat room' })
-  }
+    const room=(await new sql.Request(tx).input('Name',sql.NVarChar(200),name).input('Type',sql.NVarChar(20),type).input('StaffID',sql.Int,req.user!.staffId)
+      .query('INSERT INTO ChatRooms (RoomName,RoomType,CreatedByID) OUTPUT INSERTED.* VALUES (@Name,@Type,@StaffID)')).recordset[0]
+    for(const staffId of memberIds) await new sql.Request(tx).input('RoomID',sql.Int,room.RoomID).input('StaffID',sql.Int,staffId)
+      .query('INSERT INTO ChatRoomMembers (RoomID,StaffID) VALUES (@RoomID,@StaffID)')
+    await tx.commit(); tx=undefined; res.status(201).json({success:true,data:room})
+  } catch(err) {if(tx)await tx.rollback().catch(()=>{});errorResponse(res,err)}
 }
 
 export async function getMessages(req: AuthRequest, res: Response): Promise<void> {
   try {
-    const roomId = Number(req.params.roomId)
+    const roomId = id(req.params.roomId)
     const pool = await getPool()
     const result = await pool.request()
       .input('RoomID', sql.Int, roomId)
@@ -105,59 +67,27 @@ export async function getMessages(req: AuthRequest, res: Response): Promise<void
         IF NOT EXISTS (SELECT 1 FROM ChatRoomMembers WHERE RoomID = @RoomID AND StaffID = @StaffID)
           THROW 51000, 'You are not a member of this chat room', 1;
 
-        SELECT m.MessageID, m.RoomID, m.SenderID, s.FullName AS SenderName, m.Content,
+        SELECT TOP (200) m.DocumentID, m.MessageID, m.RoomID, m.SenderID, s.FullName AS SenderName, m.Content,
                m.MessageType, m.FileName, m.FileSize, m.SentAt
         FROM ChatMessages m
         INNER JOIN Staff s ON m.SenderID = s.StaffID
+        INNER JOIN ChatRoomMembers authorised ON authorised.RoomID=m.RoomID AND authorised.StaffID=@StaffID
         WHERE m.RoomID = @RoomID AND m.IsDeleted = 0
-        ORDER BY m.SentAt ASC
+        ORDER BY m.MessageID DESC
       `)
 
     res.json({ success: true, data: result.recordset })
   } catch (err) {
     console.error('Get chat messages error:', err)
-    res.status(500).json({ success: false, message: 'Could not load messages' })
+    errorResponse(res, (err as any)?.number===51000 ? new HttpError(403,'Room access denied') : err)
   }
 }
 
-export async function sendMessage(req: AuthRequest, res: Response): Promise<void> {
+export async function sendMessage(req:AuthRequest,res:Response):Promise<void> {
   try {
-    const roomId = Number(req.params.roomId)
-    const staffId = req.user!.staffId
-    const messageType = req.body.type === 'file' ? 'file' : 'text'
-    const fileName = req.body.fileName ? String(req.body.fileName).trim() : null
-    const fileSize = Number(req.body.fileSize || 0) || null
-    const content = String(req.body.content || fileName || '').trim()
-    if (!content && !fileName) { res.status(400).json({ success: false, message: 'Message cannot be empty' }); return }
-
-    const pool = await getPool()
-    const result = await pool.request()
-      .input('RoomID', sql.Int, roomId)
-      .input('StaffID', sql.Int, staffId)
-      .input('Content', sql.NVarChar(sql.MAX), content)
-      .input('MessageType', sql.NVarChar, messageType)
-      .input('FileName', sql.NVarChar, fileName)
-      .input('FileSize', sql.Int, fileSize)
-      .query(`
-        IF NOT EXISTS (SELECT 1 FROM ChatRoomMembers WHERE RoomID = @RoomID AND StaffID = @StaffID)
-          THROW 51000, 'You are not a member of this chat room', 1;
-
-        INSERT INTO ChatMessages (RoomID, SenderID, Content, MessageType, FileName, FileSize)
-        OUTPUT INSERTED.MessageID, INSERTED.RoomID, INSERTED.SenderID, INSERTED.Content, INSERTED.MessageType, INSERTED.FileName, INSERTED.FileSize, INSERTED.SentAt
-        VALUES (@RoomID, @StaffID, @Content, @MessageType, @FileName, @FileSize)
-      `)
-
-    const staff = await pool.request()
-      .input('StaffID', sql.Int, staffId)
-      .query('SELECT FullName FROM Staff WHERE StaffID = @StaffID')
-
-    res.status(201).json({
-      success: true,
-      data: { ...result.recordset[0], SenderName: staff.recordset[0]?.FullName || 'User' },
-      message: 'Message sent',
-    })
-  } catch (err) {
-    console.error('Send message error:', err)
-    res.status(500).json({ success: false, message: 'Could not send message' })
-  }
+    chatLimiter.take(req.user!.staffId)
+    const roomId=id(req.params.roomId),message=await createMessage(roomId,req.user!.staffId,req.body)
+    if(req.app.locals.emitRoom) await req.app.locals.emitRoom(roomId,'chat:message',message).catch(()=>{})
+    res.status(201).json({success:true,data:message})
+  } catch(err) { errorResponse(res,chatError(err)) }
 }

@@ -60,8 +60,7 @@ export async function generateTrialBalanceReport(req: AuthRequest, res: Response
 
     // In production: actually generate PDF using jsPDF or ExcelJS
     // For now return data
-    res.json({ success: true, message: 'Report generated successfully', data: result.recordset,
-      downloadUrl: `/api/reports/download/trial-balance-${Date.now()}.${format === 'PDF' ? 'pdf' : 'xlsx'}` })
+    res.json({ success: true, message: 'Report data prepared', data: result.recordset })
   } catch (err) {
     res.status(500).json({ success: false, message: 'Server error' })
   }

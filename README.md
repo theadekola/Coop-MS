@@ -1,3 +1,5 @@
+> **Security rollout:** Read [SECURITY.md](SECURITY.md) and apply the security migration and restricted runtime role before starting this revision. Public administrator registration and reusable reset keys are retired.
+
 # Coop-MS (Oshodi Coop Management System)
 
 Complete Management System software for cooperative societies — backend API, web frontend, and SQL schema. This repository contains the application source, deployment instructions and operational scripts used to install and run the Oshodi Coop system in a small self-hosted environment.

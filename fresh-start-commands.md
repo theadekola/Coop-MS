@@ -1,3 +1,5 @@
+> **Retired procedure:** These historic reset commands must not be run against cooperative records. Read [SECURITY.md](SECURITY.md) for setup, migration and recovery. Both destructive reset SQL scripts now refuse execution.
+
 # Fresh Start Commands
 
 Use these commands after uploading the updated `backend` and `frontend` folders to `/opt/oshodi-coop`.

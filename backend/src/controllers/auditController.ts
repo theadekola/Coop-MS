@@ -51,7 +51,7 @@ export async function exportAuditLogs(req: AuthRequest, res: Response): Promise<
       ORDER BY a.CreatedAt DESC
     `)
     const headers = ['Date & Time', 'Staff Name', 'Action', 'Module', 'Description', 'Old Value', 'New Value', 'IP Address']
-    const csvEscape = (value: unknown) => `"${String(value ?? '').replace(/"/g, '""')}"`
+    const csvEscape = (value: unknown) => `"${String(value ?? '').replace(/^[=+@\-]/, value=>"'"+value).replace(/"/g, '""')}"`
     const rows = result.recordset.map(row => [
       row.CreatedAt,
       row.StaffName,
@@ -72,24 +72,4 @@ export async function exportAuditLogs(req: AuthRequest, res: Response): Promise<
   }
 }
 
-export async function clearOldAuditLogs(req: AuthRequest, res: Response): Promise<void> {
-  try {
-    const days = Math.max(1, Number(req.query.days || req.body?.days || 90))
-    const pool = await getPool()
-    const result = await pool.request()
-      .input('Days', sql.Int, days)
-      .query('DELETE FROM AuditLogs WHERE CreatedAt < DATEADD(day, -1 * @Days, GETDATE())')
-
-    await pool.request()
-      .input('StaffID', sql.Int, req.user!.staffId)
-      .input('Description', sql.NVarChar, `Cleared audit logs older than ${days} days`)
-      .input('NewValue', sql.NVarChar, `Rows deleted: ${result.rowsAffected[0] || 0}`)
-      .input('IPAddress', sql.NVarChar, req.ip || '')
-      .query(`INSERT INTO AuditLogs (StaffID, ActionType, Module, Description, NewValue, IPAddress) VALUES (@StaffID, 'DELETE', 'System Logs', @Description, @NewValue, @IPAddress)`)
-
-    res.json({ success: true, data: { deleted: result.rowsAffected[0] || 0 }, message: 'Old logs cleared' })
-  } catch (err) {
-    console.error(err)
-    res.status(500).json({ success: false, message: 'Could not clear old logs' })
-  }
-}
+export async function clearOldAuditLogs(_req:AuthRequest,res:Response):Promise<void>{res.status(405).json({success:false,message:'Audit logs are append-only'})}

@@ -342,20 +342,7 @@ const createEmptyState = (): FinancialState => ({
   updatedAt: new Date().toISOString(),
 })
 
-const loadState = () => {
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY)
-    if (!stored) return createEmptyState()
-    const parsed = JSON.parse(stored) as Partial<FinancialState>
-    return {
-      settings: normalizeSettings({ ...defaultSettings, ...(parsed.settings || {}) }),
-      tables: { ...emptyTables, ...(parsed.tables || {}) },
-      updatedAt: parsed.updatedAt || new Date().toISOString(),
-    }
-  } catch {
-    return createEmptyState()
-  }
-}
+const loadState = () => {localStorage.removeItem(STORAGE_KEY);return createEmptyState()}
 
 const formatCurrency = (value: number) =>
   `${NAIRA}${value.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -513,7 +500,6 @@ function FinancialSettings() {
           updatedAt: saved.updatedAt || new Date().toISOString(),
         }
         setState(next)
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(next))
       })
       .catch(() => undefined)
     return () => {
@@ -534,13 +520,10 @@ function FinancialSettings() {
         tables: { ...emptyTables, ...(saved.tables || next.tables) },
         updatedAt: saved.updatedAt || next.updatedAt,
       }
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(merged))
       setState(merged)
       toast.success('Financial settings saved.')
     } catch {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(next))
-      setState(next)
-      toast.success('Financial settings saved on this device.')
+      toast.error('The server did not save financial settings. Please retry.')
     } finally {
       setSaving(false)
     }
@@ -551,13 +534,10 @@ function FinancialSettings() {
     setSaving(true)
     try {
       const saved = await settingsApi.save<FinancialState>(SETTINGS_SCOPE, next)
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(saved))
       setState(saved)
       toast.success('Financial settings reset to default.')
     } catch {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(next))
-      setState(next)
-      toast.success('Financial settings reset on this device.')
+      toast.error('The server did not reset financial settings. Please retry.')
     } finally {
       setSaving(false)
     }

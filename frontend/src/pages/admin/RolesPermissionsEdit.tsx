@@ -1,1 +1,1 @@
-export { default } from '../settings/RolesPermissions'
+export {default} from '../settings/RolesPermissions'

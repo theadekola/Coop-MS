@@ -13,13 +13,6 @@ async function resolveDeptId(pool: any, deptId?: number, department?: string): P
   return result.recordset[0]?.DeptID ?? null
 }
 
-async function ensurePasswordResetKeyColumn(pool: any): Promise<void> {
-  await pool.request().query(`
-    IF COL_LENGTH('Staff', 'PasswordResetKeyHash') IS NULL
-      ALTER TABLE Staff ADD PasswordResetKeyHash NVARCHAR(500) NULL;
-  `)
-}
-
 export async function getAllStaff(req: AuthRequest, res: Response): Promise<void> {
   try {
     const { search, dept, role, status, page = 1, limit = 20 } = req.query
@@ -52,7 +45,7 @@ export async function getStaffById(req: AuthRequest, res: Response): Promise<voi
   try {
     const pool = await getPool()
     const result = await pool.request().input('StaffID', sql.Int, req.params.id)
-      .query(`SELECT s.*, d.DeptName as Department FROM Staff s LEFT JOIN Departments d ON s.DeptID = d.DeptID WHERE s.StaffID = @StaffID`)
+      .query(`SELECT s.StaffID,s.EmployeeID,s.FullName,s.Email,s.Phone,s.Role,s.Status,s.JoinedDate,s.LastLogin,s.TwoFactorEnabled,s.PhotoPath,d.DeptName as Department FROM Staff s LEFT JOIN Departments d ON s.DeptID = d.DeptID WHERE s.StaffID = @StaffID`)
     if (!result.recordset[0]) { res.status(404).json({ success: false, message: 'Staff not found' }); return }
     const { PasswordHash, PasswordResetKeyHash, RefreshToken, TwoFactorSecret, ...staff } = result.recordset[0]
     res.json({ success: true, data: staff })
@@ -65,27 +58,24 @@ export async function createStaff(req: AuthRequest, res: Response): Promise<void
   try {
     const { fullName, email, phone, role, deptId, department, password, passwordResetKey } = req.body
     if (!fullName || !email || !phone || !role || !password) { res.status(400).json({ success: false, message: 'Required fields missing' }); return }
-    if (String(password).length < 8) { res.status(400).json({ success: false, message: 'Password must be at least 8 characters' }); return }
-    if (passwordResetKey && String(passwordResetKey).trim().length < 4) { res.status(400).json({ success: false, message: 'Password Reset Key must be at least 4 characters' }); return }
-    if (role === 'super_admin' && req.user!.role !== 'super_admin') {
+    if (typeof password !== 'string' || password.length < 12 || Buffer.byteLength(password)>72) { res.status(400).json({ success: false, message: 'Password must be at least 12 characters' }); return }
+
+    if (['super_admin','admin'].includes(role) && req.user!.role !== 'super_admin') {
       res.status(403).json({ success: false, message: 'Only Super Admin can create another Super Admin account' })
       return
     }
 
     const pool = await getPool()
-    await ensurePasswordResetKeyColumn(pool)
     const existsResult = await pool.request().input('Email', sql.NVarChar, email.toLowerCase())
       .query('SELECT StaffID FROM Staff WHERE Email = @Email')
     if (existsResult.recordset.length > 0) { res.status(409).json({ success: false, message: 'Email already exists' }); return }
     const resolvedDeptId = await resolveDeptId(pool, deptId, department)
 
     // Generate employee ID
-    const lastResult = await pool.request().query("SELECT TOP 1 EmployeeID FROM Staff ORDER BY StaffID DESC")
-    const lastNum = lastResult.recordset[0] ? parseInt(lastResult.recordset[0].EmployeeID.replace('EXC', '')) : 0
-    const employeeId = `EXC${String(lastNum + 1).padStart(3, '0')}`
+    const employeeId = `EXC${randomBytes(8).toString('hex')}`
 
     const passwordHash = await bcrypt.hash(password, 12)
-    const passwordResetKeyHash = passwordResetKey ? await bcrypt.hash(String(passwordResetKey).trim(), 12) : null
+    const passwordResetKeyHash = null
     const result = await pool.request()
       .input('EmployeeID', sql.NVarChar, employeeId)
       .input('FullName', sql.NVarChar, fullName)
@@ -118,22 +108,21 @@ export async function updateStaff(req: AuthRequest, res: Response): Promise<void
   try {
     const { fullName, email, phone, role, deptId, department, status, passwordResetKey } = req.body
     const pool = await getPool()
-    await ensurePasswordResetKeyColumn(pool)
     const targetResult = await pool.request()
       .input('StaffID', sql.Int, req.params.id)
       .query('SELECT StaffID, Role FROM Staff WHERE StaffID = @StaffID')
     const target = targetResult.recordset[0]
     if (!target) { res.status(404).json({ success: false, message: 'Staff not found' }); return }
-    if (target.Role === 'super_admin' && req.user!.role !== 'super_admin') {
+    if (['super_admin','admin'].includes(target.Role) && req.user!.role !== 'super_admin') {
       res.status(403).json({ success: false, message: 'Only Super Admin can update a Super Admin account' })
       return
     }
-    if (role === 'super_admin' && req.user!.role !== 'super_admin') {
+    if (['super_admin','admin'].includes(role) && req.user!.role !== 'super_admin') {
       res.status(403).json({ success: false, message: 'Only Super Admin can assign the Super Admin role' })
       return
     }
     const resolvedDeptId = await resolveDeptId(pool, deptId, department)
-    const passwordResetKeyHash = passwordResetKey ? await bcrypt.hash(String(passwordResetKey).trim(), 12) : null
+    const passwordResetKeyHash = null
     await pool.request()
       .input('StaffID', sql.Int, req.params.id)
       .input('FullName', sql.NVarChar, fullName)
@@ -151,6 +140,7 @@ export async function updateStaff(req: AuthRequest, res: Response): Promise<void
                   DeptID = COALESCE(@DeptID, DeptID),
                   Status = COALESCE(@Status, Status),
                   PasswordResetKeyHash = COALESCE(@PasswordResetKeyHash, PasswordResetKeyHash),
+                  TokenVersion = TokenVersion+1,
                   UpdatedAt = GETDATE()
               WHERE StaffID = @StaffID`)
 
@@ -175,18 +165,18 @@ export async function resetStaffPassword(req: AuthRequest, res: Response): Promi
 
     const staff = staffResult.recordset[0]
     if (!staff) { res.status(404).json({ success: false, message: 'Staff not found' }); return }
-    if (staff.Role === 'super_admin' && req.user!.role !== 'super_admin') {
+    if (['super_admin','admin'].includes(staff.Role) && req.user!.role !== 'super_admin') {
       res.status(403).json({ success: false, message: 'Only Super Admin can reset a Super Admin password' })
       return
     }
 
-    const temporaryPassword = `Temp@${randomBytes(4).toString('hex')}`
+    const temporaryPassword = `Temp@${randomBytes(16).toString('hex')}`
     const passwordHash = await bcrypt.hash(temporaryPassword, 12)
 
     await pool.request()
       .input('StaffID', sql.Int, req.params.id)
       .input('PasswordHash', sql.NVarChar, passwordHash)
-      .query('UPDATE Staff SET PasswordHash = @PasswordHash, UpdatedAt = GETDATE() WHERE StaffID = @StaffID')
+      .query('UPDATE Staff SET PasswordHash = @PasswordHash, TokenVersion=TokenVersion+1, UpdatedAt = GETDATE() WHERE StaffID = @StaffID')
 
     await pool.request()
       .input('StaffID', sql.Int, req.user!.staffId)
@@ -217,4 +207,8 @@ export async function getDashboardStats(req: AuthRequest, res: Response): Promis
   } catch (err) {
     res.status(500).json({ success: false, message: 'Server error' })
   }
+}
+
+export async function getDirectory(_req:AuthRequest,res:Response):Promise<void> {
+ try{const result=await (await getPool()).request().query("SELECT StaffID,FullName FROM Staff WHERE Status='active' ORDER BY FullName");res.json({success:true,data:result.recordset})}catch{res.status(500).json({success:false,message:'Directory unavailable'})}
 }

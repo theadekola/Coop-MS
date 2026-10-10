@@ -1,3 +1,4 @@
+import { useAuthStore } from '../store/authStore'
 import axios from 'axios'
 import type { Account, AccountType, AuditLog, Report, Staff, StaffStatus, Transaction, TransactionType, User, UserRole } from '../types'
 
@@ -9,6 +10,7 @@ type ApiResponse<T> = {
   user?: Partial<User> & Record<string, unknown>
   requires2FA?: boolean
   tempUserId?: number
+  challengeId?: string
   total?: number
   page?: number
   limit?: number
@@ -26,6 +28,7 @@ export type Paginated<T> = {
   limit?: number
 }
 
+let refreshRequest:Promise<void>|null=null
 const api = axios.create({
   baseURL: '/api',
   withCredentials: true,
@@ -51,12 +54,22 @@ api.interceptors.request.use(config => {
 
 api.interceptors.response.use(
   response => response,
-  error => {
+  async error => {
     if (error?.response?.status === 401) {
       const message = error.response.data?.message || 'Request failed'
       const requestUrl = String(error.config?.url || '')
-      const isAuthRequest = requestUrl.startsWith('/auth/')
+      const isAuthRequest = ['/auth/login','/auth/verify-2fa','/auth/refresh','/auth/change-password','/auth/2fa','/auth/logout'].some(url=>requestUrl.startsWith(url))
       const isLoginPage = window.location.pathname === '/login'
+      if(!isAuthRequest && !isLoginPage && !error.config._retried) {
+        error.config._retried=true
+        try {
+          if(!refreshRequest) refreshRequest=axios.post('/api/auth/refresh',{}, {withCredentials:true}).then(response=>{
+            useAuthStore.getState().login(response.data.token,normalizeUser(response.data.user))
+          }).finally(()=>{refreshRequest=null})
+          await refreshRequest
+          return api.request(error.config)
+        } catch { /* Sign-in is required after failed refresh. */ }
+      }
 
       if (isAuthRequest || isLoginPage) {
         return Promise.reject(new Error(message))
@@ -176,6 +189,7 @@ export const authApi = {
     return {
       requires2FA: Boolean(response.data.requires2FA),
       tempUserId: response.data.tempUserId,
+      challengeId: response.data.challengeId,
       token: response.data.token,
       user: response.data.user ? normalizeUser(response.data.user) : undefined,
       message: response.data.message,
@@ -184,8 +198,8 @@ export const authApi = {
   async registerAdmin(payload: { fullName: string; email: string; phone: string; password: string; role?: 'admin' | 'super_admin' }) {
     return read<Record<string, unknown>>(await api.post('/auth/register-admin', payload))
   },
-  async verify2FA(staffId: number, otp: string) {
-    const response = await api.post<ApiResponse<never> & { token: string; user: Record<string, unknown> }>('/auth/verify-2fa', { staffId, otp })
+  async verify2FA(challengeId: string, otp: string) {
+    const response = await api.post<ApiResponse<never> & { token: string; user: Record<string, unknown> }>('/auth/verify-2fa', { challengeId, otp })
     if (!response.data.success || !response.data.token || !response.data.user) throw new Error(response.data.message || 'OTP verification failed')
     return { token: response.data.token, user: normalizeUser(response.data.user) }
   },
@@ -204,9 +218,12 @@ export const authApi = {
   async completePasswordReset(payload: { email: string; passwordResetKey: string; newPassword: string }) {
     return read<{ changedAt: string }>(await api.post('/auth/password-reset/complete', payload))
   },
-  async setTwoFactor(enabled: boolean) {
-    return read<{ twoFactorEnabled: boolean }>(await api.put('/auth/2fa', { enabled }))
+  async setTwoFactor(enabled: boolean, currentPassword: string, otp: string) {
+    return read<{ twoFactorEnabled: boolean }>(await api.put('/auth/2fa', { enabled, currentPassword, otp }))
   },
+  async setupTwoFactor(currentPassword:string){ return read<{secret:string;uri:string}>(await api.post('/auth/2fa/setup',{currentPassword})) },
+  async sessions(){return read<Array<{SessionID:string;CreatedAt:string;ExpiresAt:string;current:boolean}>>(await api.get('/auth/sessions'))},
+  revokeOtherSessions:()=>api.delete('/auth/sessions/others'),
   logout: () => api.post('/auth/logout'),
 }
 
@@ -340,7 +357,8 @@ export const chatApi = {
   },
   async messages(roomId: number) {
     const rows = read<Record<string, unknown>[]>(await api.get(`/chat/rooms/${roomId}/messages`))
-    return rows.map(row => ({
+    return rows.reverse().map(row => ({
+      documentId: row.DocumentID ? Number(row.DocumentID) : undefined,
       id: Number(row.MessageID ?? row.id),
       senderId: Number(row.SenderID ?? row.senderId),
       senderName: String(row.SenderName ?? row.senderName ?? 'User'),
@@ -352,9 +370,10 @@ export const chatApi = {
       isRead: true,
     }))
   },
-  async sendMessage(roomId: number, content: string, options?: { type?: 'text' | 'file'; fileName?: string; fileSize?: number }) {
+  async sendMessage(roomId: number, content: string, options?: { type?: 'text' | 'file'; fileName?: string; fileSize?: number; documentId?:number }) {
     const row = read<Record<string, unknown>>(await api.post(`/chat/rooms/${roomId}/messages`, { content, ...options }))
     return {
+      documentId: row.DocumentID ? Number(row.DocumentID) : undefined,
       id: Number(row.MessageID ?? row.id),
       senderId: Number(row.SenderID ?? row.senderId),
       senderName: String(row.SenderName ?? row.senderName ?? 'User'),
@@ -368,6 +387,10 @@ export const chatApi = {
   },
 }
 
+export const documentsApi = {
+  async upload(file:File,roomId:number){const data=new FormData();data.append('file',file);data.append('roomId',String(roomId));return read<{DocumentID:number}>(await api.post('/documents',data))},
+  async download(id:number,name:string){const response=await api.get(`/documents/${id}`,{responseType:'blob'});const url=URL.createObjectURL(response.data);const link=document.createElement('a');link.href=url;link.download=name;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000)},
+}
 export const settingsApi = {
   async get<T extends object>(scope: string): Promise<Partial<T>> {
     return read<Partial<T>>(await api.get(`/settings/${scope}`))

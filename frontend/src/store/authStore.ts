@@ -12,7 +12,7 @@ interface AuthActions {
 
 export const useAuthStore = create<AuthState & AuthActions>()(
   persist(
-    (set) => ({
+    (set,get) => ({
       user: null,
       token: null,
       isAuthenticated: false,
@@ -22,6 +22,9 @@ export const useAuthStore = create<AuthState & AuthActions>()(
 
       login: (token, user) => set({ token, user, isAuthenticated: true, requires2FA: false }),
       logout: () => {
+        const token=get().token
+        if(token) void fetch('/api/auth/logout',{method:'POST',credentials:'include',headers:{Authorization:`Bearer ${token}`}}).catch(()=>{})
+        void caches.delete('oshodi-coop-api').catch(()=>{})
         localStorage.removeItem('auth-storage')
         set({ user: null, token: null, isAuthenticated: false, requires2FA: false })
       },

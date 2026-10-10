@@ -88,6 +88,7 @@ export interface ChatMessage {
   content: string;
   timestamp: string;
   type: 'text' | 'file';
+  documentId?: number;
   fileName?: string;
   fileSize?: string;
   isRead: boolean;
