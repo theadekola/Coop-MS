@@ -222,7 +222,7 @@ export default function UserManagement() {
           phone: cells[indexOf('phone')] || '',
           role: ((cells[indexOf('role')] || 'staff').toLowerCase().replace(/\s+/g, '_') as UserRole),
           department: cells[indexOf('department')] || 'General',
-          password: cells[indexOf('password')] || 'Password@123',
+          password: cells[indexOf('password')] || '',
         })
         created += 1
       }

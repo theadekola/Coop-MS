@@ -1,3 +1,4 @@
+import {pagination} from '../security/validation'
 import { Response } from 'express'
 import { getPool, sql } from '../config/database'
 import type { AuthRequest } from '../middleware/auth'
@@ -5,7 +6,7 @@ import type { AuthRequest } from '../middleware/auth'
 export async function getReports(req: AuthRequest, res: Response): Promise<void> {
   try {
     const { type, from, to, dept, generatedBy, page = 1, limit = 20 } = req.query
-    const offset = (Number(page) - 1) * Number(limit)
+    const {offset,limit:boundedLimit} = pagination(page,limit)
     const pool = await getPool()
 
     let query = `SELECT r.ReportID, r.ReportName, r.ReportType, r.Category, r.DateFrom, r.DateTo, 
@@ -21,7 +22,7 @@ export async function getReports(req: AuthRequest, res: Response): Promise<void>
       req2.input('Dept', sql.NVarChar, dept as string)
     }
 
-    query += ` ORDER BY r.GeneratedAt DESC OFFSET ${offset} ROWS FETCH NEXT ${Number(limit)} ROWS ONLY`
+    query += ` ORDER BY r.GeneratedAt DESC OFFSET ${offset} ROWS FETCH NEXT ${boundedLimit} ROWS ONLY`
     const result = await req2.query(query)
     res.json({ success: true, data: result.recordset })
   } catch (err) {

@@ -1,3 +1,4 @@
+import {pagination} from '../security/validation'
 import { Response } from 'express'
 import { getPool, sql } from '../config/database'
 import type { AuthRequest } from '../middleware/auth'
@@ -5,7 +6,7 @@ import type { AuthRequest } from '../middleware/auth'
 export async function getAuditLogs(req: AuthRequest, res: Response): Promise<void> {
   try {
     const { from, to, staffId, module, action, ip, search, page = 1, limit = 20 } = req.query
-    const offset = (Number(page) - 1) * Number(limit)
+    const {offset,limit:boundedLimit} = pagination(page,limit)
     const pool = await getPool()
 
     let query = `SELECT a.LogID, a.ActionType, a.Module, a.Description, a.OldValue, a.NewValue, 
@@ -21,7 +22,7 @@ export async function getAuditLogs(req: AuthRequest, res: Response): Promise<voi
     if (ip) { query += ' AND a.IPAddress = @IP'; req2.input('IP', sql.NVarChar, ip as string) }
     if (search) { query += ' AND (a.Description LIKE @Search OR a.OldValue LIKE @Search OR a.NewValue LIKE @Search)'; req2.input('Search', sql.NVarChar, `%${search}%`) }
 
-    query += ` ORDER BY a.CreatedAt DESC OFFSET ${offset} ROWS FETCH NEXT ${Number(limit)} ROWS ONLY`
+    query += ` ORDER BY a.CreatedAt DESC OFFSET ${offset} ROWS FETCH NEXT ${boundedLimit} ROWS ONLY`
     const result = await req2.query(query)
 
     const statsResult = await pool.request().query(`
@@ -51,7 +52,7 @@ export async function exportAuditLogs(req: AuthRequest, res: Response): Promise<
       ORDER BY a.CreatedAt DESC
     `)
     const headers = ['Date & Time', 'Staff Name', 'Action', 'Module', 'Description', 'Old Value', 'New Value', 'IP Address']
-    const csvEscape = (value: unknown) => `"${String(value ?? '').replace(/^[=+@\-]/, value=>"'"+value).replace(/"/g, '""')}"`
+    const csvEscape = (value: unknown) => `"${String(value ?? '').replace(/^\s*[=+@\-]/, value=>"'"+value).replace(/"/g, '""')}"`
     const rows = result.recordset.map(row => [
       row.CreatedAt,
       row.StaffName,

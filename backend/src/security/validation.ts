@@ -11,7 +11,13 @@ export function text(value: unknown, max: number, label = 'Text'): string {
 }
 export function password(value: unknown): string {
   if (typeof value !== 'string' || value.length < 12 || Buffer.byteLength(value) > 72) throw new HttpError(400, 'Password must contain at least 12 characters and at most 72 bytes')
+  if (/^(staff|admin|password)[@!]?\d+$/i.test(value)) throw new HttpError(400,'Choose a unique password rather than a shared default')
   return value
+}
+export function pagination(page:unknown,limit:unknown):{offset:number;limit:number} {
+  const pageNumber=id(page),pageSize=id(limit)
+  if(pageNumber>1000000 || pageSize>100)throw new HttpError(400,'Pagination exceeds the allowed range')
+  return {offset:(pageNumber-1)*pageSize,limit:pageSize}
 }
 export function email(value: unknown): string {
   const result = text(value, 200, 'Email').toLowerCase()

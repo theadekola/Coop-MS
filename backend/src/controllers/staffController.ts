@@ -1,3 +1,5 @@
+import {pagination} from '../security/validation'
+import {text,email as validateEmail,password as validatePassword,HttpError,errorResponse} from '../security/validation'
 import { Response } from 'express'
 import bcrypt from 'bcryptjs'
 import { randomBytes } from 'crypto'
@@ -16,7 +18,7 @@ async function resolveDeptId(pool: any, deptId?: number, department?: string): P
 export async function getAllStaff(req: AuthRequest, res: Response): Promise<void> {
   try {
     const { search, dept, role, status, page = 1, limit = 20 } = req.query
-    const offset = (Number(page) - 1) * Number(limit)
+    const {offset,limit:boundedLimit} = pagination(page,limit)
 
     const pool = await getPool()
     let query = `SELECT s.StaffID, s.EmployeeID, s.FullName, s.Email, s.Phone, s.Role, s.Status,
@@ -30,14 +32,14 @@ export async function getAllStaff(req: AuthRequest, res: Response): Promise<void
     if (role) { query += ` AND s.Role = @Role`; req2.input('Role', sql.NVarChar, role as string) }
     if (status) { query += ` AND s.Status = @Status`; req2.input('Status', sql.NVarChar, status as string) }
 
-    query += ` ORDER BY s.FullName OFFSET ${offset} ROWS FETCH NEXT ${Number(limit)} ROWS ONLY`
+    query += ` ORDER BY s.FullName OFFSET ${offset} ROWS FETCH NEXT ${boundedLimit} ROWS ONLY`
     const result = await req2.query(query)
 
     const countResult = await pool.request().query(`SELECT COUNT(*) as total FROM Staff`)
     res.json({ success: true, data: result.recordset, total: countResult.recordset[0].total, page: Number(page), limit: Number(limit) })
   } catch (err) {
     console.error(err)
-    res.status(500).json({ success: false, message: 'Server error' })
+    errorResponse(res,err)
   }
 }
 
@@ -50,13 +52,15 @@ export async function getStaffById(req: AuthRequest, res: Response): Promise<voi
     const { PasswordHash, PasswordResetKeyHash, RefreshToken, TwoFactorSecret, ...staff } = result.recordset[0]
     res.json({ success: true, data: staff })
   } catch (err) {
-    res.status(500).json({ success: false, message: 'Server error' })
+    errorResponse(res,err)
   }
 }
 
 export async function createStaff(req: AuthRequest, res: Response): Promise<void> {
   try {
-    const { fullName, email, phone, role, deptId, department, password, passwordResetKey } = req.body
+    const { role,deptId,department } = req.body
+    const fullName=text(req.body.fullName,200,'Name'),email=validateEmail(req.body.email),phone=text(req.body.phone,20,'Phone'),password=validatePassword(req.body.password)
+    if(!['super_admin','admin','accountant','auditor','cashier','loan_officer','manager','staff'].includes(role)) throw new HttpError(400,'Invalid role')
     if (!fullName || !email || !phone || !role || !password) { res.status(400).json({ success: false, message: 'Required fields missing' }); return }
     if (typeof password !== 'string' || password.length < 12 || Buffer.byteLength(password)>72) { res.status(400).json({ success: false, message: 'Password must be at least 12 characters' }); return }
 
@@ -100,7 +104,7 @@ export async function createStaff(req: AuthRequest, res: Response): Promise<void
     res.status(201).json({ success: true, message: 'Staff created successfully', data: { staffId: result.recordset[0].StaffID, employeeId } })
   } catch (err) {
     console.error(err)
-    res.status(500).json({ success: false, message: 'Server error' })
+    errorResponse(res,err)
   }
 }
 
@@ -156,7 +160,7 @@ export async function updateStaff(req: AuthRequest, res: Response): Promise<void
 
     res.json({ success: true, message: 'Staff updated successfully' })
   } catch (err) {
-    res.status(500).json({ success: false, message: 'Server error' })
+    errorResponse(res,err)
   }
 }
 
@@ -192,7 +196,7 @@ export async function resetStaffPassword(req: AuthRequest, res: Response): Promi
     res.json({ success: true, message: 'Password reset successfully', data: { temporaryPassword } })
   } catch (err) {
     console.error(err)
-    res.status(500).json({ success: false, message: 'Server error' })
+    errorResponse(res,err)
   }
 }
 
@@ -209,7 +213,7 @@ export async function getDashboardStats(req: AuthRequest, res: Response): Promis
     `)
     res.json({ success: true, data: result.recordset[0] })
   } catch (err) {
-    res.status(500).json({ success: false, message: 'Server error' })
+    errorResponse(res,err)
   }
 }
 

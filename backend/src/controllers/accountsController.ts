@@ -1,3 +1,4 @@
+import {pagination} from '../security/validation'
 import { Response } from 'express'
 import { getPool, sql } from '../config/database'
 import type { AuthRequest } from '../middleware/auth'
@@ -6,7 +7,7 @@ import { HttpError, id, text, amount, errorResponse } from '../security/validati
 export async function getTransactions(req: AuthRequest, res: Response): Promise<void> {
   try {
     const { account, type, from, to, page = 1, limit = 20, search } = req.query
-    const offset = (Number(page) - 1) * Number(limit)
+    const {offset,limit:boundedLimit} = pagination(page,limit)
     const pool = await getPool()
 
     let query = `SELECT t.TxnID, t.Reference, t.TxnDate, t.Description, t.TxnType, 
@@ -24,7 +25,7 @@ export async function getTransactions(req: AuthRequest, res: Response): Promise<
     if (from) { query += ` AND t.TxnDate >= @From`; req2.input('From', sql.Date, from as string) }
     if (to) { query += ` AND t.TxnDate <= @To`; req2.input('To', sql.Date, to as string) }
 
-    query += ` ORDER BY t.TxnDate DESC, t.TxnID DESC OFFSET ${offset} ROWS FETCH NEXT ${Number(limit)} ROWS ONLY`
+    query += ` ORDER BY t.TxnDate DESC, t.TxnID DESC OFFSET ${offset} ROWS FETCH NEXT ${boundedLimit} ROWS ONLY`
     const result = await req2.query(query)
     const countResult = await pool.request().query('SELECT COUNT(*) as total FROM Transactions WHERE Status != \'voided\'')
     res.json({ success: true, data: result.recordset, total: countResult.recordset[0].total })

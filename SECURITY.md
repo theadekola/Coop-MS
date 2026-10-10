@@ -41,7 +41,7 @@ the secret manager and back it up independently from the database.
 
 ## Required deployment steps
 
-1. Take and verify an encrypted backup of the database and private files. Stop
+1. Rotate previously exposed credentials and reset accounts created with former shared import/initial-password defaults. Take and verify an encrypted backup of the database and private files. Stop
    writers and record the deployed commit and migration version.
 2. As a separate migration operator, run `npm run db:security` in `backend` with
    `MIGRATION_DB_USER`, `MIGRATION_DB_PASSWORD`, and the database connection

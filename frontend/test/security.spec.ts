@@ -25,7 +25,7 @@ test('Password challenge is sent to OTP verification before a session is establi
   return route.fulfill({status:401,json:{success:false,message:'Sign in required'}})
  })
  await page.goto('/login')
- await page.getByPlaceholder('Enter your username or email').fill('staff@example.test')
+ await page.getByPlaceholder('Enter your email address').fill('staff@example.test')
  await page.getByPlaceholder('Enter your password').fill('test-password-only')
  await page.getByRole('button',{name:'Sign In',exact:true}).click()
  await expect(page.getByLabel('Authenticator code')).toBeVisible()

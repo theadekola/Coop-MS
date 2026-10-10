@@ -221,7 +221,7 @@ export default function StaffManagement() {
           phone,
           role: 'staff',
           department: row.department || 'General',
-          password: row.password || 'Staff@12345',
+          password: row.password || '',
         })
         imported += 1
       }
